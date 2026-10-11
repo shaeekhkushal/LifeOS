@@ -1,7 +1,7 @@
 // LifeOS — Data Service
 // Central API for all data operations. Components import from here.
 
-import { LocalStore, getItem, hydrateCollections, resetClientCache, sendDataAction, setItem } from './storage';
+import { LocalStore, getItem, hydrateCollections, sendDataAction, setItem } from './storage';
 import type { UserProfile, Account, Category, Transaction, Habit, HabitLog, Goal, Task, TrackingEntry, TrackingModule } from './types';
 import { generateId, getToday, getStartOfMonth, getEndOfMonth, getStartOfWeek } from './utils';
 
@@ -370,7 +370,6 @@ export function getOverallHabitCompletion(): number {
   const habits = getHabits();
   if (habits.length === 0) return 0;
 
-  const today = getToday();
   let completed = 0;
   for (const habit of habits) {
     if (isHabitCompletedToday(habit.id)) completed++;

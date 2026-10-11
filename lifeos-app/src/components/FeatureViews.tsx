@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Component, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import * as ds from "@/lib/data-service";
 import type { Account, Category, Goal, Habit, HabitLog, Task, Transaction } from "@/lib/types";
 import { formatCurrency, formatDate, getToday } from "@/lib/utils";
@@ -18,6 +18,24 @@ function Empty({ children = "No entries yet." }: { children?: string }) {
 
 function ErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+function escapeCsvValue(value: string | number | null | undefined): string {
+  const normalized = String(value ?? "").replace(/\r?\n/g, " ").replace(/"/g, '""');
+  return `"${normalized}"`;
+}
+
+function downloadCsv(name: string, rows: Array<Array<string | number | null | undefined>>) {
+  const content = rows.map(row => row.map(value => escapeCsvValue(value)).join(",")).join("\n");
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function HorizontalBarChart({ data, emptyText, color = "#e8754f", formatter }: {
@@ -301,15 +319,20 @@ function FinanceSpendingDistribution({ categories, currency }: { categories: { c
   const colors = ["#e8754f", "#527f73", "#e9ad49", "#8b83b5", "#6d9bb0", "#c47a8b"];
   const radius = 43;
   const circumference = 2 * Math.PI * radius;
-  let offset = 0;
+  const segments = displayed.reduce<Array<{ category: { categoryName: string; amount: number }; offset: number; segment: number; index: number }>>((result, category) => {
+    const previousOffset = result.reduce((sum, item) => sum + item.segment, 0);
+    const segment = (category.amount / total) * circumference;
+    result.push({ category, offset: previousOffset, segment, index: result.length });
+    return result;
+  }, []);
 
   return <div className="finance-distribution">
     <div className="finance-donut-wrap">
       <svg className="finance-donut" viewBox="0 0 120 120" role="img" aria-label={`Expense category distribution, total ${formatCurrency(total, currency)}`}>
         <circle cx="60" cy="60" r={radius} fill="none" stroke="#edf1ed" strokeWidth="15" />
-        {displayed.map((category, index) => {
-          const segment = (category.amount / total) * circumference;
-          const circle = <circle
+        {segments.map(segmentData => {
+          const { category, offset, segment, index } = segmentData;
+          return <circle
             key={category.categoryName}
             cx="60"
             cy="60"
@@ -323,8 +346,6 @@ function FinanceSpendingDistribution({ categories, currency }: { categories: { c
           >
             <title>{category.categoryName}: {formatCurrency(category.amount, currency)} ({Math.round((category.amount / total) * 100)}%)</title>
           </circle>;
-          offset += segment;
-          return circle;
         })}
       </svg>
       <div className="finance-donut-center"><b>{formatCurrency(total, currency)}</b><span>This month</span></div>
@@ -516,45 +537,14 @@ function TaskActivityHeatmap({ tasks }: { tasks: Task[] }) {
   </>;
 }
 
-export function Dashboard({ onNavigate, onNotify }: DashboardProps) {
-  const [overview, setOverview] = useState<{
-    transactions: Transaction[];
-    habits: Habit[];
-    habitLogs: HabitLog[];
-    tasks: Task[];
-    todaysTasks: Task[];
-    goals: Goal[];
-  } | null>(null);
-  const notifyRef = useRef(onNotify);
-  notifyRef.current = onNotify;
-
-  const loadOverview = useCallback(async () => {
-    try {
-      await ds.initializeDefaults();
-      setOverview({
-        transactions: ds.getTransactions(),
-        habits: ds.getHabits(),
-        habitLogs: ds.getHabitLogs(),
-        tasks: ds.getTasks(),
-        todaysTasks: ds.getTasks({ date: getToday() }),
-        goals: ds.getGoals("active"),
-      });
-    } catch (error) {
-      notifyRef.current(ErrorMessage(error, "Unable to load the overview."));
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadOverview();
-  }, [loadOverview]);
-
+export function Dashboard({ onNavigate }: DashboardProps) {
   const currency = ds.getProfile()?.currencySymbol || "৳";
-  const transactions = overview?.transactions || ds.getTransactions();
-  const habits = overview?.habits || ds.getHabits();
-  const habitLogs = overview?.habitLogs || ds.getHabitLogs();
-  const tasks = overview?.tasks || ds.getTasks();
-  const todaysTasks = overview?.todaysTasks || ds.getTasks({ date: getToday() });
-  const goals = overview?.goals || ds.getGoals("active");
+  const transactions = ds.getTransactions();
+  const habits = ds.getHabits();
+  const habitLogs = ds.getHabitLogs();
+  const tasks = ds.getTasks();
+  const todaysTasks = ds.getTasks({ date: getToday() });
+  const goals = ds.getGoals("active");
   const income = ds.getMonthlyIncome();
   const expenses = ds.getMonthlyExpenses();
   const savings = ds.getMonthlySavings();
@@ -572,11 +562,13 @@ export function Dashboard({ onNavigate, onNotify }: DashboardProps) {
         <div><p className="eyebrow">YOUR LIFE, IN PERSPECTIVE</p><h1>Life overview<span>.</span></h1><p className="subheading">A current snapshot of your finances, habits, goals, and tasks.</p></div>
         <button className="primary-button" onClick={() => onNavigate("Finance")}>Add transaction <span>+</span></button>
       </div>
-      <div className="metric-grid overview-metrics">
+      <div className="metric-grid overview-metrics overview-metrics-financial">
         <div className="metric-card"><p>MONTHLY INCOME</p><strong className="metric-value">{formatCurrency(income, currency)}</strong><div className="metric-change">From recorded income</div></div>
         <div className="metric-card"><p>MONTHLY EXPENSES</p><strong className="metric-value">{formatCurrency(expenses, currency)}</strong><div className="metric-change orange">From recorded expenses</div></div>
         <div className="metric-card"><p>MONTHLY SAVINGS</p><strong className="metric-value">{formatCurrency(savings, currency)}</strong><div className="metric-change">Income minus expenses</div></div>
         <div className="metric-card"><p>ACCOUNT BALANCE</p><strong className="metric-value">{formatCurrency(ds.getTotalBalance(), currency)}</strong><div className="metric-change">Across active accounts</div></div>
+      </div>
+      <div className="metric-grid overview-metrics overview-metrics-life">
         <div className="metric-card"><p>HABITS COMPLETED TODAY</p><strong className="metric-value">{habits.length ? `${currentHabitCompletion}%` : "0%"}</strong><div className="metric-change">{habits.length ? `${completedToday} of ${habits.length} habits` : "No habits created"}</div></div>
         <div className="metric-card"><p>ACTIVE GOALS</p><strong className="metric-value">{activeGoals}</strong><div className="metric-change">Current goal targets</div></div>
       </div>
@@ -606,7 +598,7 @@ export function Dashboard({ onNavigate, onNotify }: DashboardProps) {
           <OverviewTaskStatus tasks={tasks} todaysTasks={todaysTasks} onNavigate={onNavigate} />
         </Panel>
       </div>
-      <button className="data-refresh" onClick={() => void loadOverview()} aria-label="Refresh overview">Refresh overview</button>
+      <button className="data-refresh" onClick={() => window.location.reload()} aria-label="Refresh overview">Refresh overview</button>
     </div>
   );
 }
@@ -638,7 +630,7 @@ export function FinanceView({ onNotify }: ViewProps) {
       } catch (error) { onNotify(ErrorMessage(error, "Unable to load finance records.")); }
     }
     void loadFinance();
-  }, [revision]);
+  }, [onNotify, revision]);
 
   const currency = ds.getProfile()?.currencySymbol || "৳";
   const filteredCategories = categories.filter(category => category.type === type);
@@ -715,8 +707,26 @@ export function FinanceView({ onNotify }: ViewProps) {
   const expenses = ds.getMonthlyExpenses();
   const expenseCategories = ds.getExpensesByCategory();
   const topExpenseCategories = expenseCategories.slice(0, 6).map(item => ({ label: item.categoryName, value: item.amount }));
-  return <div>
-    <div className="welcome-row"><div><p className="eyebrow">MONEY, MADE VISIBLE</p><h1>Finance<span>.</span></h1><p className="subheading">Every figure here comes from your saved transactions.</p></div></div>
+
+  const exportFinanceCsv = () => {
+    const rows: Array<Array<string | number | null | undefined>> = [
+      ["Date", "Type", "Category", "Description", "Amount", "Account", "Notes"],
+      ...transactions.map(transaction => [
+        transaction.date,
+        transaction.type,
+        transaction.categoryName,
+        transaction.description,
+        transaction.amount,
+        accounts.find(account => account.id === transaction.accountId)?.name || transaction.accountId,
+        transaction.notes || "",
+      ]),
+    ];
+    downloadCsv(`lifeos-finance-${getToday()}.csv`, rows);
+    onNotify("Finance CSV downloaded.");
+  };
+
+  return <div key={revision}>
+    <div className="welcome-row"><div><p className="eyebrow">MONEY, MADE VISIBLE</p><h1>Finance<span>.</span></h1><p className="subheading">Every figure here comes from your saved transactions.</p></div><div className="top-actions"><button className="secondary-button" type="button" onClick={exportFinanceCsv}>Export CSV</button><button className="secondary-button" type="button" onClick={() => window.print()}>Print / PDF</button></div></div>
     <div className="metric-grid finance-metrics"><div className="metric-card"><p>THIS MONTH INCOME</p><strong className="metric-value">{formatCurrency(income, currency)}</strong><div className="metric-change">Recorded income</div></div><div className="metric-card"><p>THIS MONTH EXPENSES</p><strong className="metric-value">{formatCurrency(expenses, currency)}</strong><div className="metric-change orange">Recorded expenses</div></div><div className="metric-card"><p>THIS MONTH SAVINGS</p><strong className="metric-value">{formatCurrency(income - expenses, currency)}</strong><div className="metric-change">Income minus expenses</div></div><div className="metric-card"><p>ACCOUNT BALANCE</p><strong className="metric-value">{formatCurrency(ds.getTotalBalance(), currency)}</strong><div className="metric-change">Across active accounts</div></div></div>
     <div className="finance-period-row">
       <span>Cash flow period</span>
@@ -789,7 +799,7 @@ export function HabitsView({ onNotify }: ViewProps) {
     catch (error) { onNotify(ErrorMessage(error, "Unable to add the habit.")); }
   }
 
-  return <div>
+  return <div key={revision}>
     <div className="welcome-row"><div><p className="eyebrow">SMALL PROMISES, KEPT</p><h1>Habits<span>.</span></h1><p className="subheading">Track consistency with dated completion records.</p></div></div>
     <div className="feature-grid"><Panel title="Create a habit"><form className="data-form" onSubmit={submit}><label>Habit name<input required maxLength={80} value={name} onChange={event => setName(event.target.value)} placeholder="e.g. Walk outside" /></label><label>Category<input value={category} onChange={event => setCategory(event.target.value)} maxLength={40} /></label><label>Frequency<select value={frequency} onChange={event => setFrequency(event.target.value as "daily" | "weekly")}><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label><label>Target per week<input type="number" min="1" max="7" step="1" required value={target} onChange={event => setTarget(event.target.value)} /></label><button className="primary-button" type="submit">Add habit</button></form></Panel><Panel title="Today’s progress"><strong className="metric-value">{habits.length ? `${ds.getOverallHabitCompletion()}%` : "0%"}</strong><p className="subheading">{habits.filter(habit => ds.isHabitCompletedToday(habit.id)).length} of {habits.length} habits completed today</p></Panel></div>
     <div className="data-panel-gap"><Panel title={`Your habits (${habits.length})`}>{habits.length ? <div className="data-list">{habits.map(habit => { const completed = ds.isHabitCompletedToday(habit.id); return <div className="data-list-row" key={habit.id}><span><b>{habit.name}</b><small>{habit.category} · {habit.frequency} · {ds.getHabitStreak(habit.id)} day streak</small></span><button type="button" className={completed ? "secondary-button" : "primary-button"} onClick={async () => { try { await ds.toggleHabit(habit.id); refresh(); onNotify(completed ? "Completion removed." : "Habit marked complete."); } catch (error) { onNotify(ErrorMessage(error, "Unable to update habit.")); } }}>{completed ? "Undo today" : "Complete today"}</button><button type="button" className="danger-button" onClick={async () => { if (!window.confirm(`Delete ${habit.name} and its completion history?`)) return; try { if (!await ds.deleteHabit(habit.id)) throw new Error("That habit no longer exists."); refresh(); onNotify("Habit deleted."); } catch (error) { onNotify(ErrorMessage(error, "Unable to delete habit.")); } }}>Delete</button></div>; })}</div> : <Empty>No habits created yet.</Empty>}</Panel></div>
@@ -815,7 +825,7 @@ export function GoalsView({ onNotify }: ViewProps) {
     catch (error) { onNotify(ErrorMessage(error, "Unable to create goal.")); }
   }
 
-  return <div>
+  return <div key={revision}>
     <div className="welcome-row"><div><p className="eyebrow">MAKE ROOM FOR WHAT MATTERS</p><h1>Goals<span>.</span></h1><p className="subheading">Record a target, then update progress as it changes.</p></div></div>
     <div className="feature-grid"><Panel title="New goal"><form className="data-form" onSubmit={submit}><label>Goal<input required maxLength={100} value={title} onChange={event => setTitle(event.target.value)} placeholder="What are you working toward?" /></label><label>Category<input value={category} onChange={event => setCategory(event.target.value)} maxLength={40} /></label><label>Target date<input type="date" required value={targetDate} onChange={event => setTargetDate(event.target.value)} /></label><div className="form-row"><label>Target value<input type="number" min="0.01" step="any" required value={targetValue} onChange={event => setTargetValue(event.target.value)} /></label><label>Unit<input required maxLength={20} value={unit} onChange={event => setUnit(event.target.value)} /></label></div><label>Priority<select value={priority} onChange={event => setPriority(event.target.value as Goal["priority"])}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label><button className="primary-button" type="submit">Create goal</button></form></Panel><Panel title="Progress overview">{goals.length ? <div className="data-list">{goals.filter(goal => goal.status === "active").slice(0, 4).map(goal => <div className="data-list-row" key={goal.id}><span><b>{goal.title}</b><small>{ds.getGoalProgress(goal)}% · due {formatDate(goal.targetDate)}</small></span></div>)}</div> : <Empty>No goals recorded.</Empty>}</Panel></div>
     <div className="data-panel-gap"><Panel title={`All goals (${goals.length})`}>{goals.length ? <div className="data-list">{goals.map(goal => <GoalRow key={goal.id} goal={goal} onNotify={onNotify} refresh={refresh} />)}</div> : <Empty>Create your first goal above.</Empty>}</Panel></div>
@@ -866,7 +876,7 @@ export function TasksView({ onNotify }: ViewProps) {
     catch (error) { onNotify(ErrorMessage(error, "Unable to add task.")); }
   }
 
-  return <div>
+  return <div key={revision}>
     <div className="welcome-row"><div><p className="eyebrow">PUT THE NEXT THING IN VIEW</p><h1>Productivity<span>.</span></h1><p className="subheading">A task list grounded in the dates and priorities you set.</p></div></div>
     <div className="metric-grid productivity-metrics">
       <div className="metric-card"><p>OPEN TASKS</p><strong className="metric-value">{Math.max(taskStats.total - taskStats.completed, 0)}</strong><div className="metric-change">Not completed · excludes cancelled</div></div>

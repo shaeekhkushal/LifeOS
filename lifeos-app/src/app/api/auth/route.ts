@@ -9,7 +9,6 @@ import {
   passwordMatches,
   publicUser,
   removeUserSessions,
-  updatePassword,
   updatePasswordForUser,
 } from "@/lib/server/database";
 import { getRequestUser, sessionCookieName, sessionLifetimeSeconds, validPassword } from "@/lib/server/auth";
@@ -98,16 +97,5 @@ export async function POST(request: NextRequest) {
     return setSession(NextResponse.json({ ok: true }), token);
   }
 
-  if (action === "reset-password") {
-    const username = typeof body.username === "string" ? body.username.trim() : "";
-    const newPassword = body.newPassword;
-    if (!username || !validPassword(newPassword)) return fail("Enter your username and a new password of at least 6 characters.");
-    if (!findUserByUsername(username)) return fail("No account was found with that username.", 404);
-    if (!updatePassword(username, newPassword)) return fail("Unable to reset password.", 500);
-    const user = findUserByUsername(username);
-    if (user) removeUserSessions(user.id);
-    return NextResponse.json({ ok: true });
-  }
-
-  return fail("Choose a valid account action.");
+  return fail("Password changes are only available after signing in from Settings.", 403);
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import * as ds from "@/lib/data-service";
 import type { TrackingEntry, TrackingModule } from "@/lib/types";
 import { formatCurrency, formatDate, getEndOfMonth, getStartOfMonth, getToday } from "@/lib/utils";
@@ -31,17 +31,32 @@ const moduleCopy: Record<TrackingModule, {
 
 type ModuleViewProps = { module: string; onNotify: (message: string) => void };
 
+function escapeCsvValue(value: string | number | null | undefined): string {
+  const normalized = String(value ?? "").replace(/\r?\n/g, " ").replace(/"/g, '""');
+  return `"${normalized}"`;
+}
+
+function downloadCsv(name: string, rows: Array<Array<string | number | null | undefined>>) {
+  const content = rows.map(row => row.map(value => escapeCsvValue(value)).join(",")).join("\n");
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function RecordPanel({ title, children }: { title: string; children: React.ReactNode }) {
   return <section className="panel"><div className="panel-heading"><h2>{title}</h2></div>{children}</section>;
 }
 
 function ReportsView({ onNotify }: { onNotify: (message: string) => void }) {
-  const [entries, setEntries] = useState<TrackingEntry[]>([]);
   const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    try { setEntries(ds.getTrackingEntries()); }
-    catch (error) { onNotify(error instanceof Error ? error.message : "Unable to load reports."); }
-  }, [revision]);
+  const entries = ds.getTrackingEntries();
+  const renderVersion = revision;
 
   const transactions = ds.getTransactions();
   const habitLogs = ds.getHabitLogs();
@@ -67,8 +82,18 @@ function ReportsView({ onNotify }: { onNotify: (message: string) => void }) {
   const expenseTotal = transactions.filter(transaction => transaction.type === "expense").reduce((sum, transaction) => sum + transaction.amount, 0);
   const currency = ds.getProfile()?.currencySymbol || "৳";
 
-  return <div>
-    <div className="welcome-row"><div><p className="eyebrow">SEE WHAT THE RECORDS SAY</p><h1>Reports<span>.</span></h1><p className="subheading">A live summary of saved entries, transactions, and habit logs.</p></div><button className="secondary-button" type="button" onClick={() => setRevision(value => value + 1)}>Refresh report</button></div>
+  const exportReportCsv = () => {
+    const rows: Array<Array<string | number | null | undefined>> = [
+      ["Date", "Type", "Module", "Title", "Category", "Amount", "Status"],
+      ...entries.map(entry => [entry.date, "Tracking", entry.module, entry.title, entry.category, entry.value ?? "", entry.status]),
+      ...transactions.map(transaction => [transaction.date, transaction.type, "Finance", transaction.description, transaction.categoryName, formatCurrency(transaction.amount, currency), transaction.accountId]),
+    ];
+    downloadCsv("lifeos-report.csv", rows);
+    onNotify("Reports CSV downloaded.");
+  };
+
+  return <div key={renderVersion}>
+    <div className="welcome-row"><div><p className="eyebrow">SEE WHAT THE RECORDS SAY</p><h1>Reports<span>.</span></h1><p className="subheading">A live summary of saved entries, transactions, and habit logs.</p></div><div className="top-actions"><button className="secondary-button" type="button" onClick={exportReportCsv}>Export CSV</button><button className="secondary-button" type="button" onClick={() => window.print()}>Print / PDF</button><button className="secondary-button" type="button" onClick={() => setRevision(value => value + 1)}>Refresh report</button></div></div>
     <div className="metric-grid report-metrics">
       <div className="metric-card"><p>TRACKING RECORDS</p><strong className="metric-value">{entries.length}</strong><div className="metric-change">Across all tracking modules</div></div>
       <div className="metric-card"><p>THIS MONTH</p><strong className="metric-value">{currentMonthEntries.length}</strong><div className="metric-change">Entries and transactions</div></div>
@@ -91,8 +116,9 @@ export default function ModuleView({ module, onNotify }: ModuleViewProps) {
 
 function TrackingModuleView({ module, onNotify }: { module: TrackingModule; onNotify: (message: string) => void }) {
   const config = moduleCopy[module];
-  const [entries, setEntries] = useState<TrackingEntry[]>([]);
   const [revision, setRevision] = useState(0);
+  const entries = ds.getTrackingEntries(module);
+  const dataVersion = revision;
   const [editingId, setEditingId] = useState("");
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState("");
@@ -103,11 +129,11 @@ function TrackingModuleView({ module, onNotify }: { module: TrackingModule; onNo
   const [amount, setAmount] = useState("");
   const [notes, setNotes] = useState("");
   const [search, setSearch] = useState("");
-
-  useEffect(() => {
-    try { setEntries(ds.getTrackingEntries(module)); }
-    catch (error) { onNotify(error instanceof Error ? error.message : `Unable to load ${module.toLowerCase()} records.`); }
-  }, [revision, module]);
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const month = new Date(getToday());
+    month.setDate(1);
+    return month;
+  });
 
   const refresh = () => setRevision(current => current + 1);
   const completedCount = entries.filter(entry => ["completed", "purchased", "booked", "logged"].includes(entry.status.toLowerCase())).length;
@@ -115,6 +141,22 @@ function TrackingModuleView({ module, onNotify }: { module: TrackingModule; onNo
   const recentCount = entries.filter(entry => entry.date >= getStartOfMonth() && entry.date <= getEndOfMonth()).length;
   const currency = ds.getProfile()?.currencySymbol || "৳";
   const visibleEntries = entries.filter(entry => `${entry.title} ${entry.category} ${entry.notes} ${entry.status}`.toLowerCase().includes(search.toLowerCase()));
+  const calendarEntries = module === "Calendar" ? entries : [];
+  const calendarMonthStart = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
+  const calendarMonthLabel = calendarMonthStart.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const monthDayCount = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0).getDate();
+  const calendarStartOffset = calendarMonthStart.getDay();
+  const calendarCells: Array<null | { date: string; day: number; matches: TrackingEntry[]; isToday: boolean }> = [
+    ...Array.from({ length: calendarStartOffset }, () => null),
+    ...Array.from({ length: monthDayCount }, (_, index) => {
+      const day = index + 1;
+      const date = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day);
+      const formatted = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      const matches = calendarEntries.filter(entry => entry.date === formatted).slice(0, 2);
+      return { date: formatted, day, matches, isToday: formatted === getToday() };
+    }),
+  ];
+
   if (module === "Calendar") {
     visibleEntries.sort((first, second) => {
       const firstUpcoming = first.date >= getToday() && first.status !== "Cancelled";
@@ -166,7 +208,7 @@ function TrackingModuleView({ module, onNotify }: { module: TrackingModule; onNo
     } catch (error) { onNotify(error instanceof Error ? error.message : "Unable to delete this record."); }
   }
 
-  return <div className="module-view">
+  return <div className="module-view" key={dataVersion}>
     <div className="module-hero"><div><p className="eyebrow">{config.eyebrow}</p><h1>{config.title}<span className="module-period">.</span></h1><p className="subheading">{config.description}</p></div></div>
     <div className="metric-grid module-metric-grid">
       <div className="metric-card"><p>ALL RECORDS</p><strong className="metric-value">{entries.length}</strong><div className="metric-change">Saved to this LifeOS</div></div>
@@ -174,6 +216,38 @@ function TrackingModuleView({ module, onNotify }: { module: TrackingModule; onNo
       <div className="metric-card"><p>COMPLETED / LOGGED</p><strong className="metric-value">{completedCount}</strong><div className="metric-change">Matching saved statuses</div></div>
       {config.amountLabel && <div className="metric-card"><p>RECORDED COST</p><strong className="metric-value">{formatCurrency(totalAmount, currency)}</strong><div className="metric-change">Sum of saved amounts</div></div>}
     </div>
+    {module === "Calendar" && (
+      <div className="panel calendar-shell">
+        <div className="calendar-header">
+          <h3>{calendarMonthLabel}</h3>
+          <div className="calendar-nav">
+            <button className="calendar-month-button" type="button" onClick={() => setCalendarMonth(current => new Date(current.getFullYear(), current.getMonth() - 1, 1))} aria-label="Previous month">←</button>
+            <button className="calendar-month-button" type="button" onClick={() => setCalendarMonth(current => new Date(current.getFullYear(), current.getMonth() + 1, 1))} aria-label="Next month">→</button>
+          </div>
+        </div>
+        <div className="calendar-grid" role="grid" aria-label={`Calendar for ${calendarMonthLabel}`}>
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(dayName => (
+            <div key={dayName} className="calendar-weekday">{dayName}</div>
+          ))}
+          {calendarCells.map((cell, index) => {
+            if (!cell) {
+              return <div key={`empty-${index}`} className="calendar-day empty" aria-hidden="true" />;
+            }
+            const hasEvents = cell.matches.length > 0;
+            return (
+              <div key={cell.date} className={`calendar-day ${cell.isToday ? "is-today" : ""} ${hasEvents ? "has-events" : ""}`} role="gridcell" aria-label={`${cell.date}: ${cell.matches.length} event${cell.matches.length === 1 ? "" : "s"}`}>
+                <span className="calendar-date">{cell.day}</span>
+                {hasEvents && (
+                  <div className="calendar-day-events">
+                    {cell.matches.map((match: TrackingEntry) => <span key={`${cell.date}-${match.id}`}>{match.title}</span>)}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    )}
     <div className="feature-grid module-form-grid">
       <RecordPanel title={editingId ? `Edit ${config.itemLabel.toLowerCase()}` : `Add ${config.itemLabel.toLowerCase()}`}>
         <form className="data-form" onSubmit={submit}>
