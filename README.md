@@ -30,7 +30,7 @@ This README describes the implementation that currently exists in this repositor
 | Reports | Summary charts and counts based on saved tracking entries, transactions, and habit logs |
 | Settings | Profile and currency settings, password change, account data reset, and record counts |
 
-The main workspace navigation is rendered by `src/app/page.tsx`. Navigation between these sections is client-side state; the sections do not currently have individual URL routes.
+The main workspace navigation is rendered by `src/app/page.tsx`. Navigation between these sections is client-side state represented by URL hashes; the sections do not have individual URL routes. Settings is linked from the sidebar footer and is included in the recognized navigation pages.
 
 ## Requirements
 

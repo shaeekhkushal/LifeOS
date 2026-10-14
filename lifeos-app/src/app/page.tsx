@@ -20,17 +20,17 @@ const IMPLEMENTED_MODULES = [
   "Entertainment", "Calendar", "Reports", "Settings",
 ];
 const DEDICATED_MODULES = ["Overview", "Finance", "Habits", "Goals", "Productivity", "Settings"];
+const ROUTABLE_PAGES = [...navigation.map(([label]) => label), "Settings"];
 
 function normalizePage(page: string): string {
-  return navigation.some(([label]) => label === page) ? page : "Overview";
+  return ROUTABLE_PAGES.includes(page) ? page : "Overview";
 }
 
 function resolvePageFromHash(): string {
   if (typeof window === "undefined") return "Overview";
   const hash = window.location.hash.replace(/^#\/?/, "").trim().toLowerCase();
   if (!hash) return "Overview";
-  const match = navigation.find(([label]) => label.toLowerCase() === hash);
-  return match ? match[0] : "Overview";
+  return ROUTABLE_PAGES.find(label => label.toLowerCase() === hash) || "Overview";
 }
 
 export default function Home() {
